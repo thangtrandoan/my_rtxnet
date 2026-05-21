@@ -241,7 +241,6 @@ def evaluate_vtiee(
     total_ssim = 0.0
     total_psnr = 0.0
     total_images = 0
-    total_batches = 0
     save_dir = Path(save_dir) if save_dir else None
 
     for batch in loader:
@@ -253,9 +252,9 @@ def evaluate_vtiee(
         infrared, _ = pad_to_multiple(infrared, 4)
         pred = crop_to_shape(model(low_rgb, infrared), shape).clamp(0, 1)
 
-        total_ssim += ssim(pred, gt_rgb)
-        total_psnr += psnr(pred, gt_rgb)
-        total_batches += 1
+        for i in range(pred.shape[0]):
+            total_ssim += ssim(pred[i : i + 1], gt_rgb[i : i + 1])
+            total_psnr += psnr(pred[i : i + 1], gt_rgb[i : i + 1])
 
         if lpips_model is not None:
             pred_lpips = pred * 2.0 - 1.0
@@ -268,8 +267,8 @@ def evaluate_vtiee(
                 save_image(pred[i], save_dir / name)
 
     scores = {
-        "ssim": total_ssim / max(total_batches, 1),
-        "psnr": total_psnr / max(total_batches, 1),
+        "ssim": total_ssim / max(total_images, 1),
+        "psnr": total_psnr / max(total_images, 1),
     }
     if lpips_model is not None:
         scores["lpips"] = total_lpips / max(total_images, 1)
