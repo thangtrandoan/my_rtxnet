@@ -85,9 +85,15 @@ def load_checkpoint(
     device: str | torch.device = "cpu",
 ) -> dict:
     checkpoint = torch.load(path, map_location=device)
-    state_dict = checkpoint.get("model", checkpoint)
-    model.load_state_dict(state_dict)
+    state_dict = checkpoint.get("model", checkpoint.get("params", checkpoint))
+    try:
+        model.load_state_dict(state_dict)
+    except RuntimeError:
+        if all(key.startswith("module.") for key in state_dict):
+            state_dict = {key.removeprefix("module."): value for key, value in state_dict.items()}
+        else:
+            state_dict = {f"module.{key}": value for key, value in state_dict.items()}
+        model.load_state_dict(state_dict)
     if optimizer is not None and checkpoint.get("optimizer") is not None:
         optimizer.load_state_dict(checkpoint["optimizer"])
     return checkpoint
-

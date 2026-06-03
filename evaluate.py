@@ -44,6 +44,8 @@ def main() -> None:
     parser.add_argument("--split", default="test")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--channels", type=int, default=40)
+    parser.add_argument("--stage", type=int, default=1)
+    parser.add_argument("--num-blocks", type=int, nargs="+", default=[1, 2, 2])
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--max-samples", type=int, default=None)
@@ -59,9 +61,10 @@ def main() -> None:
         augment=False,
         max_samples=args.max_samples,
     )
+    print("Protocol: paper-style LLVIP processed input/thermal/target folders.")
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    model = build_model(channels=args.channels).to(device)
+    model = build_model(channels=args.channels, stage=args.stage, num_blocks=args.num_blocks).to(device)
     load_checkpoint(args.checkpoint, model, device=device)
     scores = evaluate(model, loader, device, args.save_dir)
     print(f"PSNR: {scores['psnr']:.4f} dB | SSIM: {scores['ssim']:.4f}")
@@ -69,4 +72,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

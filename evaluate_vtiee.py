@@ -10,7 +10,7 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
-from metrics import psnr, ssim
+from metrics import ssim
 from model import build_model
 from utils import crop_to_shape, load_checkpoint, pad_to_multiple, pil_to_tensor, save_image
 
@@ -85,11 +85,23 @@ class VTIEEEnhancementDataset(Dataset):
             paths.append(image.get("path") if isinstance(image, dict) else None)
 
         if all(paths):
-            return [self._normalize_path(path) for path in paths if path is not None]
+            try:
+                return [self._normalize_path(path) for path in paths if path is not None]
+            except ValueError:
+                # Some saved Arrow datasets keep only basenames such as
+                # exposure_107722.png. In that case recover the original
+                # RGB/<scene>/gain_*/exposure_*.png paths from dataset_info.
+                pass
 
+        return self._read_dataset_info_paths()
+
+    def _read_dataset_info_paths(self) -> list[str]:
         info_path = self.root / self.split / "dataset_info.json"
         if not info_path.is_file():
-            raise RuntimeError("V-TIEE Arrow rows do not expose image paths and dataset_info.json is missing.")
+            raise RuntimeError(
+                "V-TIEE Arrow rows do not expose full image paths and dataset_info.json is missing. "
+                "Expected paths like RGB/<scene>/gain_<gain>/exposure_<exposure>.png."
+            )
 
         with info_path.open("r", encoding="utf-8") as f:
             info = json.load(f)
@@ -223,23 +235,16 @@ def evaluate_vtiee(
     loader: DataLoader,
     device: torch.device,
     save_dir: str | Path | None = None,
-    compute_lpips: bool = True,
 ) -> dict:
     model.eval()
-    lpips_model = None
-    if compute_lpips:
-        try:
-            import lpips
-        except ImportError as exc:
-            raise ImportError(
-                "V-TIEE evaluation uses LPIPS + SSIM. Install LPIPS with: pip install lpips "
-                "or pass --no-lpips to report only SSIM/PSNR."
-            ) from exc
-        lpips_model = lpips.LPIPS(net="alex").to(device).eval()
+    try:
+        import lpips
+    except ImportError as exc:
+        raise ImportError("V-TIEE paper evaluation requires LPIPS. Install it with: pip install lpips") from exc
+    lpips_model = lpips.LPIPS(net="alex").to(device).eval()
 
     total_lpips = 0.0
     total_ssim = 0.0
-    total_psnr = 0.0
     total_images = 0
     save_dir = Path(save_dir) if save_dir else None
 
@@ -254,25 +259,20 @@ def evaluate_vtiee(
 
         for i in range(pred.shape[0]):
             total_ssim += ssim(pred[i : i + 1], gt_rgb[i : i + 1])
-            total_psnr += psnr(pred[i : i + 1], gt_rgb[i : i + 1])
 
-        if lpips_model is not None:
-            pred_lpips = pred * 2.0 - 1.0
-            gt_lpips = gt_rgb.clamp(0, 1) * 2.0 - 1.0
-            total_lpips += lpips_model(pred_lpips, gt_lpips).sum().item()
+        pred_lpips = pred * 2.0 - 1.0
+        gt_lpips = gt_rgb.clamp(0, 1) * 2.0 - 1.0
+        total_lpips += lpips_model(pred_lpips, gt_lpips).sum().item()
         total_images += pred.shape[0]
 
         if save_dir is not None:
             for i, name in enumerate(batch["name"]):
                 save_image(pred[i], save_dir / name)
 
-    scores = {
+    return {
+        "lpips": total_lpips / max(total_images, 1),
         "ssim": total_ssim / max(total_images, 1),
-        "psnr": total_psnr / max(total_images, 1),
     }
-    if lpips_model is not None:
-        scores["lpips"] = total_lpips / max(total_images, 1)
-    return scores
 
 
 def main() -> None:
@@ -281,6 +281,8 @@ def main() -> None:
     parser.add_argument("--split", default="train")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--channels", type=int, default=40)
+    parser.add_argument("--stage", type=int, default=1)
+    parser.add_argument("--num-blocks", type=int, nargs="+", default=[1, 2, 2])
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--max-samples", type=int, default=None)
@@ -289,7 +291,6 @@ def main() -> None:
     parser.add_argument("--input-exposure", default="min", help="'min', 'max', or an integer exposure value.")
     parser.add_argument("--target-gain", default="min", help="'min', 'max', or an integer gain value.")
     parser.add_argument("--target-exposure", default="max", help="'min', 'max', or an integer exposure value.")
-    parser.add_argument("--no-lpips", action="store_true", help="Disable LPIPS and report only SSIM/PSNR.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
@@ -313,13 +314,10 @@ def main() -> None:
     if dataset.skipped_samples:
         print(f"Skipped scenes without the requested gain/exposure setting: {dataset.skipped_samples}")
 
-    model = build_model(channels=args.channels).to(device)
+    model = build_model(channels=args.channels, stage=args.stage, num_blocks=args.num_blocks).to(device)
     load_checkpoint(args.checkpoint, model, device=device)
-    scores = evaluate_vtiee(model, loader, device, args.save_dir, compute_lpips=not args.no_lpips)
-    if "lpips" in scores:
-        print(f"LPIPS: {scores['lpips']:.4f} | SSIM: {scores['ssim']:.4f} | PSNR(ref): {scores['psnr']:.4f} dB")
-    else:
-        print(f"SSIM: {scores['ssim']:.4f} | PSNR(ref): {scores['psnr']:.4f} dB")
+    scores = evaluate_vtiee(model, loader, device, args.save_dir)
+    print(f"LPIPS: {scores['lpips']:.4f} | SSIM: {scores['ssim']:.4f}")
 
 
 if __name__ == "__main__":
