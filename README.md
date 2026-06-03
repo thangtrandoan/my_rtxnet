@@ -7,6 +7,12 @@ The code keeps the official RT-X Net network design from `rt-xnet`
 project structure. The main files are `model.py`, `dataset.py`, `train.py`,
 `evaluate.py`, `evaluate_vtiee.py`, and `infer.py`.
 
+Install the required packages:
+
+```powershell
+pip install torch pillow numpy scikit-learn matplotlib lpips datasets
+```
+
 ## Pipeline
 
 This version only supports the paper-style processed layout. Raw LLVIP
@@ -24,6 +30,15 @@ root/
   test/thermal
   test/target
 ```
+
+If you only have raw LLVIP `visible/infrared`, create the processed layout first:
+
+```powershell
+python prepare_llvip_synthetic.py --source-root ..\LLVIP --output-root ..\LLVIP_processed
+```
+
+This creates `input` by darkening `visible` and adding read/shot-like noise,
+then copies `visible` to `target` and `infrared` to `thermal`.
 
 Training objective:
 
@@ -52,6 +67,14 @@ python train.py --data-root path\to\processed_LLVIP --total-iters 2 --batch-size
 ```
 
 Checkpoints and logs are saved to `runs/default` by default.
+
+Training also writes:
+
+```text
+log.csv
+loss_curve.png
+eval_curves.png
+```
 
 ## Evaluate
 

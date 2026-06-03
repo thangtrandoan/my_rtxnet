@@ -278,19 +278,23 @@ def pca_reduce_channels(features: torch.Tensor, channels: int) -> torch.Tensor:
     """Reduce concatenated RGB/thermal features as in the official RT-X Net.
 
     The official code uses sklearn PCA on detached CPU tensors and then moves
-    the result with `.cuda()`. This PyTorch version preserves that detached PCA
-    behavior while remaining device agnostic.
+    the result back to the training device. This intentionally keeps the PCA
+    path outside autograd, matching the original implementation.
     """
     b, c, h, w = features.shape
     if c == channels:
         return features
 
-    x = features.detach().permute(0, 2, 3, 1).reshape(-1, c)
-    x = x - x.mean(dim=0, keepdim=True)
-    _, _, vh = torch.linalg.svd(x.float(), full_matrices=False)
-    components = vh[:channels].to(dtype=features.dtype, device=features.device)
-    reduced = x.to(dtype=features.dtype, device=features.device) @ components.t()
-    return reduced.view(b, h, w, channels).permute(0, 3, 1, 2).contiguous()
+    try:
+        from sklearn.decomposition import PCA
+    except ImportError as exc:
+        raise ImportError("RT-X Net paper-style PCA requires scikit-learn. Install it with: pip install scikit-learn") from exc
+
+    flattened = features.detach().view(b, c, -1)
+    flattened = flattened.permute(0, 2, 1).contiguous().view(-1, c)
+    reduced_np = PCA(n_components=channels).fit_transform(flattened.cpu().numpy())
+    reduced = torch.from_numpy(reduced_np).to(device=features.device, dtype=features.dtype)
+    return reduced.view(b, -1, channels).permute(0, 2, 1).contiguous().view(b, channels, h, w)
 
 
 class RTxNetSingleStage(nn.Module):

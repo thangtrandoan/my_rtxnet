@@ -15,6 +15,8 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, s
     model.eval()
     total_psnr = 0.0
     total_ssim = 0.0
+    total_input_psnr = 0.0
+    total_input_ssim = 0.0
     total = 0
     save_dir = Path(save_dir) if save_dir else None
 
@@ -26,16 +28,24 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, s
         low_rgb, shape = pad_to_multiple(low_rgb, 4)
         infrared, _ = pad_to_multiple(infrared, 4)
         pred = crop_to_shape(model(low_rgb, infrared), shape)
+        low_rgb = crop_to_shape(low_rgb, shape)
 
         total_psnr += psnr(pred, gt_rgb)
         total_ssim += ssim(pred, gt_rgb)
+        total_input_psnr += psnr(low_rgb, gt_rgb)
+        total_input_ssim += ssim(low_rgb, gt_rgb)
         total += 1
 
         if save_dir is not None:
             for i, name in enumerate(batch["name"]):
                 save_image(pred[i], save_dir / name)
 
-    return {"psnr": total_psnr / max(total, 1), "ssim": total_ssim / max(total, 1)}
+    return {
+        "psnr": total_psnr / max(total, 1),
+        "ssim": total_ssim / max(total, 1),
+        "input_psnr": total_input_psnr / max(total, 1),
+        "input_ssim": total_input_ssim / max(total, 1),
+    }
 
 
 def main() -> None:
@@ -67,7 +77,8 @@ def main() -> None:
     model = build_model(channels=args.channels, stage=args.stage, num_blocks=args.num_blocks).to(device)
     load_checkpoint(args.checkpoint, model, device=device)
     scores = evaluate(model, loader, device, args.save_dir)
-    print(f"PSNR: {scores['psnr']:.4f} dB | SSIM: {scores['ssim']:.4f}")
+    print(f"Input baseline | PSNR: {scores['input_psnr']:.4f} dB | SSIM: {scores['input_ssim']:.4f}")
+    print(f"Model output   | PSNR: {scores['psnr']:.4f} dB | SSIM: {scores['ssim']:.4f}")
 
 
 if __name__ == "__main__":

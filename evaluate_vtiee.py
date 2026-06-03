@@ -245,6 +245,8 @@ def evaluate_vtiee(
 
     total_lpips = 0.0
     total_ssim = 0.0
+    total_input_lpips = 0.0
+    total_input_ssim = 0.0
     total_images = 0
     save_dir = Path(save_dir) if save_dir else None
 
@@ -256,13 +258,17 @@ def evaluate_vtiee(
         low_rgb, shape = pad_to_multiple(low_rgb, 4)
         infrared, _ = pad_to_multiple(infrared, 4)
         pred = crop_to_shape(model(low_rgb, infrared), shape).clamp(0, 1)
+        low_rgb = crop_to_shape(low_rgb, shape).clamp(0, 1)
 
         for i in range(pred.shape[0]):
             total_ssim += ssim(pred[i : i + 1], gt_rgb[i : i + 1])
+            total_input_ssim += ssim(low_rgb[i : i + 1], gt_rgb[i : i + 1])
 
         pred_lpips = pred * 2.0 - 1.0
+        input_lpips = low_rgb * 2.0 - 1.0
         gt_lpips = gt_rgb.clamp(0, 1) * 2.0 - 1.0
         total_lpips += lpips_model(pred_lpips, gt_lpips).sum().item()
+        total_input_lpips += lpips_model(input_lpips, gt_lpips).sum().item()
         total_images += pred.shape[0]
 
         if save_dir is not None:
@@ -272,6 +278,8 @@ def evaluate_vtiee(
     return {
         "lpips": total_lpips / max(total_images, 1),
         "ssim": total_ssim / max(total_images, 1),
+        "input_lpips": total_input_lpips / max(total_images, 1),
+        "input_ssim": total_input_ssim / max(total_images, 1),
     }
 
 
@@ -317,7 +325,8 @@ def main() -> None:
     model = build_model(channels=args.channels, stage=args.stage, num_blocks=args.num_blocks).to(device)
     load_checkpoint(args.checkpoint, model, device=device)
     scores = evaluate_vtiee(model, loader, device, args.save_dir)
-    print(f"LPIPS: {scores['lpips']:.4f} | SSIM: {scores['ssim']:.4f}")
+    print(f"Input baseline | LPIPS: {scores['input_lpips']:.4f} | SSIM: {scores['input_ssim']:.4f}")
+    print(f"Model output   | LPIPS: {scores['lpips']:.4f} | SSIM: {scores['ssim']:.4f}")
 
 
 if __name__ == "__main__":

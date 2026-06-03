@@ -14,6 +14,9 @@ from model import build_model
 from utils import load_checkpoint, save_checkpoint, set_seed
 
 
+LOG_FIELDS = ["epoch", "step", "loss", "lr", "psnr", "ssim", "epoch_seconds", "seconds_per_iter"]
+
+
 def get_position_from_periods(iteration: int, cumulative_period: list[int]) -> int:
     for i, period in enumerate(cumulative_period):
         if iteration <= period:
@@ -76,10 +79,85 @@ def append_csv(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     exists = path.exists()
     with path.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        writer = csv.DictWriter(f, fieldnames=LOG_FIELDS, extrasaction="ignore")
         if not exists:
             writer.writeheader()
         writer.writerow(row)
+
+
+def _float_or_none(value: str | None) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def plot_training_curves(log_path: Path) -> None:
+    if not log_path.is_file():
+        return
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    rows = []
+    with log_path.open("r", newline="") as f:
+        reader = csv.DictReader(f)
+        rows.extend(reader)
+
+    loss_points = []
+    psnr_points = []
+    ssim_points = []
+    for row in rows:
+        step = _float_or_none(row.get("step"))
+        if step is None:
+            continue
+        loss = _float_or_none(row.get("loss"))
+        psnr_value = _float_or_none(row.get("psnr"))
+        ssim_value = _float_or_none(row.get("ssim"))
+        if loss is not None:
+            loss_points.append((step, loss))
+        if psnr_value is not None:
+            psnr_points.append((step, psnr_value))
+        if ssim_value is not None:
+            ssim_points.append((step, ssim_value))
+
+    if loss_points:
+        xs, ys = zip(*loss_points)
+        plt.figure(figsize=(7, 4))
+        plt.plot(xs, ys, linewidth=1.8)
+        plt.xlabel("Iteration")
+        plt.ylabel("L1 loss")
+        plt.title("Training Loss")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(log_path.parent / "loss_curve.png", dpi=150)
+        plt.close()
+
+    if psnr_points or ssim_points:
+        fig, ax1 = plt.subplots(figsize=(7, 4))
+        if psnr_points:
+            xs, ys = zip(*psnr_points)
+            ax1.plot(xs, ys, color="tab:blue", marker="o", linewidth=1.8, label="PSNR")
+            ax1.set_ylabel("PSNR", color="tab:blue")
+            ax1.tick_params(axis="y", labelcolor="tab:blue")
+        ax1.set_xlabel("Iteration")
+        ax1.grid(True, alpha=0.3)
+
+        if ssim_points:
+            ax2 = ax1.twinx()
+            xs, ys = zip(*ssim_points)
+            ax2.plot(xs, ys, color="tab:orange", marker="o", linewidth=1.8, label="SSIM")
+            ax2.set_ylabel("SSIM", color="tab:orange")
+            ax2.tick_params(axis="y", labelcolor="tab:orange")
+
+        plt.title("Validation Metrics")
+        fig.tight_layout()
+        plt.savefig(log_path.parent / "eval_curves.png", dpi=150)
+        plt.close(fig)
 
 
 def apply_mixup(batch: dict, beta: float, use_identity: bool) -> dict:
@@ -243,6 +321,7 @@ def main() -> None:
                         **scores,
                     },
                 )
+                plot_training_curves(save_dir / "log.csv")
 
             if args.save_every_iters > 0 and global_step % args.save_every_iters == 0:
                 save_checkpoint(save_dir / "last.pth", model, optimizer, epoch, global_step, best_psnr)
@@ -263,6 +342,7 @@ def main() -> None:
             "seconds_per_iter": seconds_per_iter,
         }
         append_csv(save_dir / "log.csv", row)
+        plot_training_curves(save_dir / "log.csv")
 
         if global_step >= args.total_iters:
             break
