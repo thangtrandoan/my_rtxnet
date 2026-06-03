@@ -1,6 +1,7 @@
 import argparse
 import csv
 import math
+import time
 from pathlib import Path
 
 import torch
@@ -188,8 +189,10 @@ def main() -> None:
     print(f"Save dir: {save_dir}")
 
     for epoch in range(start_epoch, args.epochs + 1):
+        epoch_start = time.perf_counter()
         model.train()
         running_loss = 0.0
+        epoch_steps = 0
 
         for batch_idx, batch in enumerate(train_loader, start=1):
             if global_step >= args.total_iters:
@@ -212,6 +215,7 @@ def main() -> None:
 
             running_loss += loss.item()
             global_step += 1
+            epoch_steps += 1
             if batch_idx % 20 == 0 or batch_idx == len(train_loader) or global_step >= args.total_iters:
                 avg = running_loss / batch_idx
                 lr = optimizer.param_groups[0]["lr"]
@@ -243,8 +247,21 @@ def main() -> None:
             if args.save_every_iters > 0 and global_step % args.save_every_iters == 0:
                 save_checkpoint(save_dir / "last.pth", model, optimizer, epoch, global_step, best_psnr)
 
-        avg_loss = running_loss / max(len(train_loader), 1)
-        row = {"epoch": epoch, "step": global_step, "loss": avg_loss, "lr": optimizer.param_groups[0]["lr"]}
+        epoch_seconds = time.perf_counter() - epoch_start
+        avg_loss = running_loss / max(epoch_steps, 1)
+        seconds_per_iter = epoch_seconds / max(epoch_steps, 1)
+        print(
+            f"epoch {epoch:03d} done | steps {epoch_steps} | "
+            f"time {epoch_seconds:.1f}s | {seconds_per_iter:.3f}s/iter"
+        )
+        row = {
+            "epoch": epoch,
+            "step": global_step,
+            "loss": avg_loss,
+            "lr": optimizer.param_groups[0]["lr"],
+            "epoch_seconds": epoch_seconds,
+            "seconds_per_iter": seconds_per_iter,
+        }
         append_csv(save_dir / "log.csv", row)
 
         if global_step >= args.total_iters:
