@@ -20,10 +20,14 @@ def load_rgb(path: Path) -> np.ndarray:
     return np.asarray(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
 
 
-def save_rgb(path: Path, image: np.ndarray) -> None:
+def save_rgb(path: Path, image: np.ndarray, quality: int) -> None:
     ensure_dir(path.parent)
     array = np.clip(image * 255.0 + 0.5, 0, 255).astype(np.uint8)
-    Image.fromarray(array, mode="RGB").save(path)
+    image_pil = Image.fromarray(array, mode="RGB")
+    if path.suffix.lower() in {".jpg", ".jpeg"}:
+        image_pil.save(path, quality=quality, subsampling=0, optimize=True)
+    else:
+        image_pil.save(path)
 
 
 def make_low_light(
@@ -74,10 +78,10 @@ def prepare_split(args, split: str) -> int:
             read_noise = args.test_read_noise
 
         low = make_low_light(gt, rng, exposure_factor, shot_noise, read_noise)
-        out_name = Path(name).with_suffix(".png").name
-        save_rgb(input_dir / out_name, low)
-        save_rgb(target_dir / out_name, gt)
-        save_rgb(thermal_out_dir / out_name, thermal)
+        out_name = Path(name).with_suffix(f".{args.output_format}").name
+        save_rgb(input_dir / out_name, low, args.jpeg_quality)
+        save_rgb(target_dir / out_name, gt, args.jpeg_quality)
+        save_rgb(thermal_out_dir / out_name, thermal, args.jpeg_quality)
 
     return len(names)
 
@@ -95,6 +99,8 @@ def main() -> None:
     parser.add_argument("--train-read-noise", type=float, default=0.01)
     parser.add_argument("--test-shot-noise", type=float, default=0.0)
     parser.add_argument("--test-read-noise", type=float, default=0.0)
+    parser.add_argument("--output-format", choices=["jpg", "png"], default="jpg")
+    parser.add_argument("--jpeg-quality", type=int, default=95)
     parser.add_argument("--max-samples", type=int, default=None)
     args = parser.parse_args()
 

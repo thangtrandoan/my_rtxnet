@@ -34,7 +34,7 @@ root/
 If you only have raw LLVIP `visible/infrared`, create the processed layout first:
 
 ```powershell
-python prepare_llvip_synthetic.py --source-root ..\LLVIP --output-root ..\LLVIP_processed
+python prepare_llvip_synthetic.py --source-root ..\LLVIP --output-root ..\LLVIP_processed --output-format jpg --jpeg-quality 95
 ```
 
 This creates `input` by darkening `visible` and adding read/shot-like noise,
